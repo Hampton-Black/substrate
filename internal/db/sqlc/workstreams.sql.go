@@ -172,6 +172,40 @@ func (q *Queries) TouchWorkstreamActivity(ctx context.Context, arg TouchWorkstre
 	return err
 }
 
+const updateWorkstream = `-- name: UpdateWorkstream :exec
+UPDATE workstreams SET
+  title = ?, intent = ?, status = ?, spec_ref = ?, branch = ?, components = ?,
+  scope = ?, last_activity = ?
+WHERE id = ?
+`
+
+type UpdateWorkstreamParams struct {
+	Title        string          `json:"title"`
+	Intent       sql.NullString  `json:"intent"`
+	Status       string          `json:"status"`
+	SpecRef      sql.NullString  `json:"spec_ref"`
+	Branch       sql.NullString  `json:"branch"`
+	Components   json.RawMessage `json:"components"`
+	Scope        string          `json:"scope"`
+	LastActivity time.Time       `json:"last_activity"`
+	ID           string          `json:"id"`
+}
+
+func (q *Queries) UpdateWorkstream(ctx context.Context, arg UpdateWorkstreamParams) error {
+	_, err := q.db.ExecContext(ctx, updateWorkstream,
+		arg.Title,
+		arg.Intent,
+		arg.Status,
+		arg.SpecRef,
+		arg.Branch,
+		arg.Components,
+		arg.Scope,
+		arg.LastActivity,
+		arg.ID,
+	)
+	return err
+}
+
 const updateWorkstreamStatus = `-- name: UpdateWorkstreamStatus :exec
 UPDATE workstreams SET status = ?, last_activity = ? WHERE id = ?
 `

@@ -9,6 +9,19 @@ SELECT * FROM capability_gaps
 WHERE pod_id = ? AND description = ?
 LIMIT 1;
 
+-- name: GetOpenGapByPodAndDescription :one
+SELECT * FROM capability_gaps
+WHERE pod_id = ? AND description = ? AND status = 'open'
+LIMIT 1;
+
+-- name: AcknowledgeGap :exec
+UPDATE capability_gaps SET status = 'acknowledged' WHERE id = ?;
+
+-- name: ResolveGap :exec
+UPDATE capability_gaps
+SET status = 'resolved', resolved_at = ?, resolution_ref = ?
+WHERE id = ?;
+
 -- name: IncrementGapFrequency :exec
 UPDATE capability_gaps
 SET frequency = frequency + 1, occurred_at = ?

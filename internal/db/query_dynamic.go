@@ -81,9 +81,11 @@ type WorkstreamFilter struct {
 // GapFilter optional filters for capability gap queries.
 type GapFilter struct {
 	Status      *string
+	Statuses    []string
 	Category    *string
 	PodID       *string
 	PriorityMax *int
+	OrderByFreq bool
 }
 
 // QueryActiveWork lists workstreams with optional filters.
@@ -150,6 +152,13 @@ func (s *Store) ListCapabilityGaps(ctx context.Context, f GapFilter) ([]GapRow, 
 	if f.Status != nil && *f.Status != "" {
 		b.WriteString(" AND status = ?")
 		args = append(args, *f.Status)
+	} else if len(f.Statuses) > 0 {
+		placeholders := make([]string, len(f.Statuses))
+		for i, st := range f.Statuses {
+			placeholders[i] = "?"
+			args = append(args, st)
+		}
+		b.WriteString(" AND status IN (" + strings.Join(placeholders, ", ") + ")")
 	}
 	if f.Category != nil && *f.Category != "" {
 		b.WriteString(" AND category = ?")
@@ -159,7 +168,11 @@ func (s *Store) ListCapabilityGaps(ctx context.Context, f GapFilter) ([]GapRow, 
 		b.WriteString(" AND priority <= ?")
 		args = append(args, *f.PriorityMax)
 	}
-	b.WriteString(" ORDER BY priority ASC, occurred_at DESC")
+	if f.OrderByFreq {
+		b.WriteString(" ORDER BY priority ASC, frequency DESC, occurred_at DESC")
+	} else {
+		b.WriteString(" ORDER BY priority ASC, occurred_at DESC")
+	}
 
 	rows, err := s.conn.QueryContext(ctx, b.String(), args...)
 	if err != nil {

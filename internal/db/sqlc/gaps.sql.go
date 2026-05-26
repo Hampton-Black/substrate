@@ -12,6 +12,15 @@ import (
 	"time"
 )
 
+const acknowledgeGap = `-- name: AcknowledgeGap :exec
+UPDATE capability_gaps SET status = 'acknowledged' WHERE id = ?
+`
+
+func (q *Queries) AcknowledgeGap(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, acknowledgeGap, id)
+	return err
+}
+
 const createGap = `-- name: CreateGap :exec
 INSERT INTO capability_gaps (
   id, pod_id, workstream_id, category, description, priority, status,
@@ -92,6 +101,38 @@ type GetGapByPodAndDescriptionParams struct {
 
 func (q *Queries) GetGapByPodAndDescription(ctx context.Context, arg GetGapByPodAndDescriptionParams) (CapabilityGap, error) {
 	row := q.db.QueryRowContext(ctx, getGapByPodAndDescription, arg.PodID, arg.Description)
+	var i CapabilityGap
+	err := row.Scan(
+		&i.ID,
+		&i.PodID,
+		&i.WorkstreamID,
+		&i.Category,
+		&i.Description,
+		&i.Priority,
+		&i.Status,
+		&i.ResolutionRef,
+		&i.Frequency,
+		&i.Scope,
+		&i.OccurredAt,
+		&i.ResolvedAt,
+		&i.Metadata,
+	)
+	return i, err
+}
+
+const getOpenGapByPodAndDescription = `-- name: GetOpenGapByPodAndDescription :one
+SELECT id, pod_id, workstream_id, category, description, priority, status, resolution_ref, frequency, scope, occurred_at, resolved_at, metadata FROM capability_gaps
+WHERE pod_id = ? AND description = ? AND status = 'open'
+LIMIT 1
+`
+
+type GetOpenGapByPodAndDescriptionParams struct {
+	PodID       string `json:"pod_id"`
+	Description string `json:"description"`
+}
+
+func (q *Queries) GetOpenGapByPodAndDescription(ctx context.Context, arg GetOpenGapByPodAndDescriptionParams) (CapabilityGap, error) {
+	row := q.db.QueryRowContext(ctx, getOpenGapByPodAndDescription, arg.PodID, arg.Description)
 	var i CapabilityGap
 	err := row.Scan(
 		&i.ID,
@@ -250,4 +291,21 @@ func (q *Queries) ListOpenGapsByPod(ctx context.Context, podID string) ([]Capabi
 		return nil, err
 	}
 	return items, nil
+}
+
+const resolveGap = `-- name: ResolveGap :exec
+UPDATE capability_gaps
+SET status = 'resolved', resolved_at = ?, resolution_ref = ?
+WHERE id = ?
+`
+
+type ResolveGapParams struct {
+	ResolvedAt    sql.NullTime   `json:"resolved_at"`
+	ResolutionRef sql.NullString `json:"resolution_ref"`
+	ID            string         `json:"id"`
+}
+
+func (q *Queries) ResolveGap(ctx context.Context, arg ResolveGapParams) error {
+	_, err := q.db.ExecContext(ctx, resolveGap, arg.ResolvedAt, arg.ResolutionRef, arg.ID)
+	return err
 }

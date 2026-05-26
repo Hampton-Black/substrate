@@ -20,3 +20,9 @@ UPDATE workstreams SET status = ?, last_activity = ? WHERE id = ?;
 
 -- name: TouchWorkstreamActivity :exec
 UPDATE workstreams SET last_activity = ? WHERE id = ?;
+
+-- name: UpdateWorkstream :exec
+UPDATE workstreams SET
+  title = ?, intent = ?, status = ?, spec_ref = ?, branch = ?, components = ?,
+  scope = ?, last_activity = ?
+WHERE id = ?;
