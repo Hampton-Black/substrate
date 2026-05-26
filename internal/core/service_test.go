@@ -250,3 +250,118 @@ func TestListGapsPriorityMaxFilter(t *testing.T) {
 	require.Len(t, gaps, 1)
 	require.Equal(t, 2, gaps[0].Priority)
 }
+
+func TestGapDedupOpenOnly(t *testing.T) {
+	svc, _, ctx := newTestService(t)
+
+	_, err := svc.RegisterPod(ctx, core.RegisterPodInput{Name: "solo-pod", Owner: "me@example.com"})
+	require.NoError(t, err)
+
+	desc := "Same description after resolve"
+	g1, err := svc.RegisterCapabilityGap(ctx, core.RegisterCapabilityGapInput{
+		PodID: "solo-pod", Category: core.GapAmbiguousSpec, Description: desc, Priority: 2,
+	})
+	require.NoError(t, err)
+
+	_, err = svc.ResolveGap(ctx, g1.ID, "decided")
+	require.NoError(t, err)
+
+	g2, err := svc.RegisterCapabilityGap(ctx, core.RegisterCapabilityGapInput{
+		PodID: "solo-pod", Category: core.GapAmbiguousSpec, Description: desc, Priority: 2,
+	})
+	require.NoError(t, err)
+	require.NotEqual(t, g1.ID, g2.ID)
+	require.Equal(t, 1, g2.Frequency)
+}
+
+func TestGapFrequencyIncrementedEvent(t *testing.T) {
+	svc, conn, ctx := newTestService(t)
+
+	_, err := svc.RegisterPod(ctx, core.RegisterPodInput{Name: "solo-pod", Owner: "me@example.com"})
+	require.NoError(t, err)
+
+	desc := "Repeated gap"
+	_, err = svc.RegisterCapabilityGap(ctx, core.RegisterCapabilityGapInput{
+		PodID: "solo-pod", Category: core.GapOther, Description: desc, Priority: 3,
+	})
+	require.NoError(t, err)
+	_, err = svc.RegisterCapabilityGap(ctx, core.RegisterCapabilityGapInput{
+		PodID: "solo-pod", Category: core.GapOther, Description: desc, Priority: 3,
+	})
+	require.NoError(t, err)
+
+	var eventType string
+	err = conn.QueryRowContext(ctx,
+		`SELECT event_type FROM events WHERE event_type = 'gap.frequency_incremented' LIMIT 1`,
+	).Scan(&eventType)
+	require.NoError(t, err)
+	require.Equal(t, "gap.frequency_incremented", eventType)
+}
+
+func TestAcknowledgeGap(t *testing.T) {
+	svc, _, ctx := newTestService(t)
+
+	_, err := svc.RegisterPod(ctx, core.RegisterPodInput{Name: "solo-pod", Owner: "me@example.com"})
+	require.NoError(t, err)
+
+	gap, err := svc.AddGap(ctx, core.AddGapInput{
+		PodID: "solo-pod", Category: core.GapOther, Description: "needs ack", Priority: 3,
+	})
+	require.NoError(t, err)
+
+	gap, err = svc.AcknowledgeGap(ctx, gap.ID)
+	require.NoError(t, err)
+	require.Equal(t, core.GapAcknowledged, gap.Status)
+
+	_, err = svc.AcknowledgeGap(ctx, gap.ID)
+	require.Error(t, err)
+}
+
+func TestResolveGap(t *testing.T) {
+	svc, _, ctx := newTestService(t)
+
+	_, err := svc.RegisterPod(ctx, core.RegisterPodInput{Name: "solo-pod", Owner: "me@example.com"})
+	require.NoError(t, err)
+
+	gap, err := svc.AddGap(ctx, core.AddGapInput{
+		PodID: "solo-pod", Category: core.GapOther, Description: "needs resolve", Priority: 3,
+	})
+	require.NoError(t, err)
+
+	gap, err = svc.ResolveGap(ctx, gap.ID, "decided: JWT")
+	require.NoError(t, err)
+	require.Equal(t, core.GapResolved, gap.Status)
+	require.Equal(t, "decided: JWT", gap.ResolutionRef)
+	require.NotNil(t, gap.ResolvedAt)
+
+	_, err = svc.ResolveGap(ctx, gap.ID, "")
+	require.Error(t, err)
+}
+
+func TestPublishWorkstreamStateCreateAndUpdate(t *testing.T) {
+	svc, _, ctx := newTestService(t)
+
+	_, err := svc.RegisterPod(ctx, core.RegisterPodInput{Name: "solo-pod", Owner: "me@example.com"})
+	require.NoError(t, err)
+
+	ws, err := svc.PublishWorkstreamState(ctx, core.PublishWorkstreamStateInput{
+		PodID:  "solo-pod",
+		Title:  "Auth refactor",
+		Intent: "Migrate to OIDC",
+		Branch: "feat/oidc",
+	})
+	require.NoError(t, err)
+	require.Equal(t, core.WorkstreamActive, ws.Status)
+	require.Equal(t, "Auth refactor", ws.Title)
+
+	ws, err = svc.PublishWorkstreamState(ctx, core.PublishWorkstreamStateInput{
+		PodID:  "solo-pod",
+		ID:     ws.ID,
+		Status: core.WorkstreamBlocked,
+		Intent: "Waiting on session token decision",
+	})
+	require.NoError(t, err)
+	require.Equal(t, core.WorkstreamBlocked, ws.Status)
+	require.Equal(t, "Auth refactor", ws.Title)
+	require.Equal(t, "Waiting on session token decision", ws.Intent)
+}

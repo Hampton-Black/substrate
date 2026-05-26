@@ -157,6 +157,7 @@ type WorkFilters struct {
 // GapFilters optional filters for list_capability_gaps.
 type GapFilters struct {
 	Status      *GapStatus
+	Statuses    []GapStatus
 	Category    *GapCategory
 	PodID       *string
 	PriorityMax *int
@@ -185,6 +186,29 @@ type AddGapInput struct {
 	Category     GapCategory
 	Description  string
 	Priority     int
+}
+
+// RegisterCapabilityGapInput is input for MCP gap registration.
+type RegisterCapabilityGapInput struct {
+	PodID        string
+	WorkstreamID string
+	Category     GapCategory
+	Description  string
+	Priority     int
+	Scope        Scope
+}
+
+// PublishWorkstreamStateInput is input for MCP workstream publish/upsert.
+type PublishWorkstreamStateInput struct {
+	PodID      string
+	ID         string
+	Title      string
+	Intent     string
+	Status     WorkstreamStatus
+	Branch     string
+	Components []string
+	SpecRef    string
+	Scope      Scope
 }
 
 // CompletionRequest is a minimal LLM completion request (stub for later milestones).

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Hampton-Black/substrate/internal/db"
@@ -118,6 +119,140 @@ func (s *Service) SetWorkstreamStatus(ctx context.Context, id string, status Wor
 	}
 
 	s.log.Info("workstream status changed", "pod_id", ws.PodID, "workstream_id", id, "status", status)
+	return s.GetWorkstream(ctx, id)
+}
+
+// PublishWorkstreamState creates or updates a workstream and emits workstream.published.
+func (s *Service) PublishWorkstreamState(ctx context.Context, in PublishWorkstreamStateInput) (Workstream, error) {
+	if _, err := s.GetPod(ctx, in.PodID); err != nil {
+		return Workstream{}, err
+	}
+
+	status := in.Status
+	if status == "" {
+		status = WorkstreamActive
+	}
+	if !status.Valid() {
+		return Workstream{}, fmt.Errorf("invalid workstream status: %q", status)
+	}
+
+	scope := in.Scope
+	if scope == "" {
+		scope = ScopeTeam
+	}
+	if !scope.Valid() {
+		return Workstream{}, fmt.Errorf("invalid scope: %q", scope)
+	}
+
+	if err := s.checkScope("", in.PodID, scope); err != nil {
+		return Workstream{}, err
+	}
+
+	now := time.Now().UTC()
+	components := in.Components
+	if components == nil {
+		components = []string{}
+	}
+	componentsJSON, _ := json.Marshal(components)
+
+	if in.ID != "" {
+		existing, err := s.GetWorkstream(ctx, in.ID)
+		if err == nil {
+			if existing.PodID != in.PodID {
+				return Workstream{}, fmt.Errorf("workstream %s belongs to pod %s, not %s", in.ID, existing.PodID, in.PodID)
+			}
+
+			title := in.Title
+			if title == "" {
+				title = existing.Title
+			}
+
+			intent := in.Intent
+			if intent == "" {
+				intent = existing.Intent
+			}
+
+			branch := in.Branch
+			if branch == "" {
+				branch = existing.Branch
+			}
+
+			specRef := in.SpecRef
+			if specRef == "" {
+				specRef = existing.SpecRef
+			}
+
+			if len(in.Components) == 0 {
+				componentsJSON, _ = json.Marshal(existing.Components)
+			}
+
+			if err := s.q.UpdateWorkstream(ctx, sqlcdb.UpdateWorkstreamParams{
+				Title:        title,
+				Intent:       nullString(intent),
+				Status:       string(status),
+				SpecRef:      nullString(specRef),
+				Branch:       nullString(branch),
+				Components:   componentsJSON,
+				Scope:        string(scope),
+				LastActivity: now,
+				ID:           in.ID,
+			}); err != nil {
+				return Workstream{}, fmt.Errorf("update workstream: %w", err)
+			}
+
+			if err := s.emitEvent(ctx, in.PodID, in.ID, "workstream.published", map[string]any{
+				"workstream_id": in.ID,
+				"title":         title,
+				"status":        status,
+			}); err != nil {
+				return Workstream{}, err
+			}
+
+			s.log.Info("workstream published", "pod_id", in.PodID, "workstream_id", in.ID)
+			return s.GetWorkstream(ctx, in.ID)
+		}
+		if !errors.Is(err, sql.ErrNoRows) && !strings.Contains(err.Error(), "not found") {
+			return Workstream{}, err
+		}
+	}
+
+	if in.Title == "" {
+		return Workstream{}, fmt.Errorf("title is required when creating a workstream")
+	}
+
+	id := in.ID
+	if id == "" {
+		id = uuid.NewString()
+	}
+	meta, _ := json.Marshal(map[string]any{})
+
+	err := s.q.CreateWorkstream(ctx, sqlcdb.CreateWorkstreamParams{
+		ID:           id,
+		PodID:        in.PodID,
+		Title:        in.Title,
+		Intent:       nullString(in.Intent),
+		Status:       string(status),
+		SpecRef:      nullString(in.SpecRef),
+		Branch:       nullString(in.Branch),
+		Components:   componentsJSON,
+		Scope:        string(scope),
+		LastActivity: now,
+		CreatedAt:    now,
+		Metadata:     meta,
+	})
+	if err != nil {
+		return Workstream{}, fmt.Errorf("create workstream: %w", err)
+	}
+
+	if err := s.emitEvent(ctx, in.PodID, id, "workstream.published", map[string]any{
+		"workstream_id": id,
+		"title":         in.Title,
+		"status":        status,
+	}); err != nil {
+		return Workstream{}, err
+	}
+
+	s.log.Info("workstream published", "pod_id", in.PodID, "workstream_id", id)
 	return s.GetWorkstream(ctx, id)
 }
 

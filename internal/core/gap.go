@@ -13,8 +13,20 @@ import (
 	"github.com/google/uuid"
 )
 
-// AddGap registers a capability gap with exact-match dedup on pod_id + description.
+// AddGap registers a capability gap via CLI (delegates to RegisterCapabilityGap).
 func (s *Service) AddGap(ctx context.Context, in AddGapInput) (CapabilityGap, error) {
+	return s.RegisterCapabilityGap(ctx, RegisterCapabilityGapInput{
+		PodID:        in.PodID,
+		WorkstreamID: in.WorkstreamID,
+		Category:     in.Category,
+		Description:  in.Description,
+		Priority:     in.Priority,
+		Scope:        ScopePod,
+	})
+}
+
+// RegisterCapabilityGap registers a capability gap with exact-match dedup on open gaps only.
+func (s *Service) RegisterCapabilityGap(ctx context.Context, in RegisterCapabilityGapInput) (CapabilityGap, error) {
 	if _, err := s.GetPod(ctx, in.PodID); err != nil {
 		return CapabilityGap{}, err
 	}
@@ -24,15 +36,26 @@ func (s *Service) AddGap(ctx context.Context, in AddGapInput) (CapabilityGap, er
 	}
 
 	priority := in.Priority
+	if priority == 0 {
+		priority = 3
+	}
 	if priority < 1 || priority > 5 {
 		return CapabilityGap{}, fmt.Errorf("priority must be 1-5, got %d", priority)
 	}
 
-	if err := s.checkScope("", in.PodID, ScopePod); err != nil {
+	scope := in.Scope
+	if scope == "" {
+		scope = ScopePod
+	}
+	if !scope.Valid() {
+		return CapabilityGap{}, fmt.Errorf("invalid scope: %q", scope)
+	}
+
+	if err := s.checkScope("", in.PodID, scope); err != nil {
 		return CapabilityGap{}, err
 	}
 
-	existing, err := s.q.GetGapByPodAndDescription(ctx, sqlcdb.GetGapByPodAndDescriptionParams{
+	existing, err := s.q.GetOpenGapByPodAndDescription(ctx, sqlcdb.GetOpenGapByPodAndDescriptionParams{
 		PodID:       in.PodID,
 		Description: in.Description,
 	})
@@ -48,13 +71,14 @@ func (s *Service) AddGap(ctx context.Context, in AddGapInput) (CapabilityGap, er
 		if existing.WorkstreamID.Valid {
 			wsEventID = existing.WorkstreamID.String
 		}
-		if err := s.emitEvent(ctx, in.PodID, wsEventID, "gap.deduped", map[string]any{
+		if err := s.emitEvent(ctx, in.PodID, wsEventID, "gap.frequency_incremented", map[string]any{
 			"gap_id":      existing.ID,
 			"description": in.Description,
+			"frequency":   existing.Frequency + 1,
 		}); err != nil {
 			return CapabilityGap{}, err
 		}
-		s.log.Info("gap deduped", "pod_id", in.PodID, "gap_id", existing.ID)
+		s.log.Info("gap frequency incremented", "pod_id", in.PodID, "gap_id", existing.ID)
 		return s.getGap(ctx, existing.ID)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -80,7 +104,7 @@ func (s *Service) AddGap(ctx context.Context, in AddGapInput) (CapabilityGap, er
 		Status:        string(GapOpen),
 		ResolutionRef: sql.NullString{},
 		Frequency:     1,
-		Scope:         string(ScopePod),
+		Scope:         string(scope),
 		OccurredAt:    now,
 		ResolvedAt:    sql.NullTime{},
 		Metadata:      meta,
@@ -101,6 +125,76 @@ func (s *Service) AddGap(ctx context.Context, in AddGapInput) (CapabilityGap, er
 	return s.getGap(ctx, id)
 }
 
+// AcknowledgeGap sets a gap's status to acknowledged.
+func (s *Service) AcknowledgeGap(ctx context.Context, id string) (CapabilityGap, error) {
+	gap, err := s.getGap(ctx, id)
+	if err != nil {
+		return CapabilityGap{}, err
+	}
+
+	if gap.Status == GapResolved || gap.Status == GapWontFix {
+		return CapabilityGap{}, fmt.Errorf("gap %s is already %s", id, gap.Status)
+	}
+	if gap.Status == GapAcknowledged {
+		return CapabilityGap{}, fmt.Errorf("gap %s is already acknowledged", id)
+	}
+
+	if err := s.checkScope("", gap.PodID, gap.Scope); err != nil {
+		return CapabilityGap{}, err
+	}
+
+	if err := s.q.AcknowledgeGap(ctx, id); err != nil {
+		return CapabilityGap{}, fmt.Errorf("acknowledge gap: %w", err)
+	}
+
+	wsEventID := gap.WorkstreamID
+	if err := s.emitEvent(ctx, gap.PodID, wsEventID, "gap.acknowledged", map[string]any{
+		"gap_id": id,
+	}); err != nil {
+		return CapabilityGap{}, err
+	}
+
+	s.log.Info("gap acknowledged", "pod_id", gap.PodID, "gap_id", id)
+	return s.getGap(ctx, id)
+}
+
+// ResolveGap sets a gap's status to resolved.
+func (s *Service) ResolveGap(ctx context.Context, id, resolutionRef string) (CapabilityGap, error) {
+	gap, err := s.getGap(ctx, id)
+	if err != nil {
+		return CapabilityGap{}, err
+	}
+
+	if gap.Status == GapResolved {
+		return CapabilityGap{}, fmt.Errorf("gap %s is already resolved", id)
+	}
+
+	if err := s.checkScope("", gap.PodID, gap.Scope); err != nil {
+		return CapabilityGap{}, err
+	}
+
+	now := time.Now().UTC()
+	if err := s.q.ResolveGap(ctx, sqlcdb.ResolveGapParams{
+		ResolvedAt:    sql.NullTime{Time: now, Valid: true},
+		ResolutionRef: nullString(resolutionRef),
+		ID:            id,
+	}); err != nil {
+		return CapabilityGap{}, fmt.Errorf("resolve gap: %w", err)
+	}
+
+	wsEventID := gap.WorkstreamID
+	payload := map[string]any{"gap_id": id}
+	if resolutionRef != "" {
+		payload["resolution_ref"] = resolutionRef
+	}
+	if err := s.emitEvent(ctx, gap.PodID, wsEventID, "gap.resolved", payload); err != nil {
+		return CapabilityGap{}, err
+	}
+
+	s.log.Info("gap resolved", "pod_id", gap.PodID, "gap_id", id)
+	return s.getGap(ctx, id)
+}
+
 func (s *Service) getGap(ctx context.Context, id string) (CapabilityGap, error) {
 	row, err := s.q.GetGap(ctx, id)
 	if err != nil {
@@ -115,10 +209,16 @@ func (s *Service) getGap(ctx context.Context, id string) (CapabilityGap, error) 
 // ListCapabilityGaps returns gaps matching optional filters.
 func (s *Service) ListCapabilityGaps(ctx context.Context, f GapFilters) ([]CapabilityGap, error) {
 	store := db.NewStore(s.conn)
-	filter := db.GapFilter{PodID: f.PodID}
+	filter := db.GapFilter{PodID: f.PodID, OrderByFreq: true}
 	if f.Status != nil {
 		st := string(*f.Status)
 		filter.Status = &st
+	}
+	if len(f.Statuses) > 0 {
+		filter.Statuses = make([]string, len(f.Statuses))
+		for i, st := range f.Statuses {
+			filter.Statuses[i] = string(st)
+		}
 	}
 	if f.Category != nil {
 		cat := string(*f.Category)
