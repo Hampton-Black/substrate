@@ -192,6 +192,64 @@ func TestMCPReadTools(t *testing.T) {
 		require.Len(t, body.Gaps, 1)
 		require.Equal(t, 2, body.Gaps[0].Priority)
 	})
+
+	t.Run("register_capability_gap", func(t *testing.T) {
+		desc := "No spec for whether sessions are JWT or opaque tokens"
+		res, err := session.CallTool(ctx, &sdkmcp.CallToolParams{
+			Name: "substrate.register_capability_gap",
+			Arguments: map[string]any{
+				"pod_id":      "solo-pod",
+				"category":    "ambiguous_spec",
+				"description": desc,
+				"priority":    2,
+			},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError)
+
+		var gap core.CapabilityGap
+		require.NoError(t, decodeStructured(res.StructuredContent, &gap))
+		require.Equal(t, desc, gap.Description)
+		require.Equal(t, 2, gap.Priority)
+
+		res, err = session.CallTool(ctx, &sdkmcp.CallToolParams{
+			Name: "substrate.register_capability_gap",
+			Arguments: map[string]any{
+				"pod_id":      "solo-pod",
+				"category":    "ambiguous_spec",
+				"description": desc,
+				"priority":    2,
+			},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError)
+
+		var gap2 core.CapabilityGap
+		require.NoError(t, decodeStructured(res.StructuredContent, &gap2))
+		require.Equal(t, gap.ID, gap2.ID)
+		require.Equal(t, 2, gap2.Frequency)
+	})
+
+	t.Run("publish_workstream_state", func(t *testing.T) {
+		res, err := session.CallTool(ctx, &sdkmcp.CallToolParams{
+			Name: "substrate.publish_workstream_state",
+			Arguments: map[string]any{
+				"pod_id": "solo-pod",
+				"id":     ws.ID,
+				"status": "blocked",
+				"intent": "Waiting on session token decision",
+			},
+		})
+		require.NoError(t, err)
+		require.False(t, res.IsError)
+
+		var updated core.Workstream
+		require.NoError(t, decodeStructured(res.StructuredContent, &updated))
+		require.Equal(t, ws.ID, updated.ID)
+		require.Equal(t, core.WorkstreamBlocked, updated.Status)
+		require.Equal(t, "Waiting on session token decision", updated.Intent)
+		require.Equal(t, "Auth refactor", updated.Title)
+	})
 }
 
 func decodeStructured(v any, dest any) error {

@@ -20,6 +20,7 @@ func Serve(ctx context.Context, svc *core.Service, log *slog.Logger) error {
 	}, nil)
 
 	registerReadTools(server, svc, log)
+	registerWriteTools(server, svc, log)
 
 	return server.Run(ctx, &sdkmcp.StdioTransport{})
 }
