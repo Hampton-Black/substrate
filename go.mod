@@ -3,6 +3,7 @@ module github.com/Hampton-Black/substrate
 go 1.26.1
 
 require (
+	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-git/go-git/v5 v5.19.1
 	github.com/google/uuid v1.6.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
