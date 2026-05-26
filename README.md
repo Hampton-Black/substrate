@@ -1,6 +1,6 @@
 # Substrate
 
-Shared world model for developer+agent pods. See the technical spec for architecture and milestones.
+Shared world model for developer+agent pods. See the [technical spec](docs/spec/substrate_technical_spec_v0.1.md) for architecture and milestones.
 
 ## Requirements
 
