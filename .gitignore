@@ -1,0 +1,29 @@
+# Build
+/substrate
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test / coverage
+*.test
+*.out
+coverage.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local Substrate data (dev)
+*.db
+*.db-shm
+*.db-wal
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vendor (optional; uncomment if not vendoring)
+# vendor/

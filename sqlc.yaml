@@ -1,0 +1,14 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    schema: "internal/db/migrations"
+    queries: "internal/db/query"
+    gen:
+      go:
+        package: "sqlcdb"
+        out: "internal/db/sqlc"
+        sql_package: "database/sql"
+        emit_json_tags: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_exact_table_names: false
