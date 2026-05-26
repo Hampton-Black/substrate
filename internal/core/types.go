@@ -148,16 +148,18 @@ type ComponentOwner struct {
 
 // WorkFilters optional filters for query_active_work.
 type WorkFilters struct {
-	Scope  *Scope
-	PodID  *string
-	Status *WorkstreamStatus
+	Scope     *Scope
+	PodID     *string
+	Component *string
+	Status    *WorkstreamStatus
 }
 
 // GapFilters optional filters for list_capability_gaps.
 type GapFilters struct {
-	Status   *GapStatus
-	Category *GapCategory
-	PodID    *string
+	Status      *GapStatus
+	Category    *GapCategory
+	PodID       *string
+	PriorityMax *int
 }
 
 // RegisterPodInput is input for pod registration.

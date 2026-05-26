@@ -130,6 +130,9 @@ func (s *Service) QueryActiveWork(ctx context.Context, f WorkFilters) ([]Workstr
 		filter.Scope = &sc
 	}
 	filter.PodID = f.PodID
+	if f.Component != nil {
+		filter.Component = f.Component
+	}
 	if f.Status != nil {
 		st := string(*f.Status)
 		filter.Status = &st

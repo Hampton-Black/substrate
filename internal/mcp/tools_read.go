@@ -19,6 +19,9 @@ func registerReadTools(server *sdkmcp.Server, svc *core.Service, log *slog.Logge
 			f.Scope = &s
 		}
 		f.PodID = in.PodID
+		if in.Component != nil {
+			f.Component = in.Component
+		}
 		if in.Status != nil {
 			st := core.WorkstreamStatus(*in.Status)
 			f.Status = &st
@@ -56,6 +59,7 @@ func registerReadTools(server *sdkmcp.Server, svc *core.Service, log *slog.Logge
 			cat := core.GapCategory(*in.Category)
 			f.Category = &cat
 		}
+		f.PriorityMax = in.PriorityMax
 		gaps, err := svc.ListCapabilityGaps(ctx, f)
 		if err != nil {
 			log.Error("list_capability_gaps failed", "error", err)
@@ -96,9 +100,10 @@ func registerReadTools(server *sdkmcp.Server, svc *core.Service, log *slog.Logge
 }
 
 type queryActiveWorkIn struct {
-	Scope  *string `json:"scope,omitempty"`
-	PodID  *string `json:"pod_id,omitempty"`
-	Status *string `json:"status,omitempty"`
+	Scope     *string `json:"scope,omitempty"`
+	PodID     *string `json:"pod_id,omitempty"`
+	Component *string `json:"component,omitempty"`
+	Status    *string `json:"status,omitempty"`
 }
 
 type queryActiveWorkOut struct {
@@ -110,9 +115,10 @@ type getWorkstreamIn struct {
 }
 
 type listGapsIn struct {
-	Status   *string `json:"status,omitempty"`
-	Category *string `json:"category,omitempty"`
-	PodID    *string `json:"pod_id,omitempty"`
+	Status      *string `json:"status,omitempty"`
+	Category    *string `json:"category,omitempty"`
+	PodID       *string `json:"pod_id,omitempty"`
+	PriorityMax *int    `json:"priority_max,omitempty"`
 }
 
 type listGapsOut struct {

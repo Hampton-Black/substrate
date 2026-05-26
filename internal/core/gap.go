@@ -44,7 +44,11 @@ func (s *Service) AddGap(ctx context.Context, in AddGapInput) (CapabilityGap, er
 		}); err != nil {
 			return CapabilityGap{}, fmt.Errorf("increment gap frequency: %w", err)
 		}
-		if err := s.emitEvent(ctx, in.PodID, existing.ID, "gap.deduped", map[string]any{
+		wsEventID := ""
+		if existing.WorkstreamID.Valid {
+			wsEventID = existing.WorkstreamID.String
+		}
+		if err := s.emitEvent(ctx, in.PodID, wsEventID, "gap.deduped", map[string]any{
 			"gap_id":      existing.ID,
 			"description": in.Description,
 		}); err != nil {
@@ -85,7 +89,7 @@ func (s *Service) AddGap(ctx context.Context, in AddGapInput) (CapabilityGap, er
 		return CapabilityGap{}, fmt.Errorf("create gap: %w", err)
 	}
 
-	if err := s.emitEvent(ctx, in.PodID, id, "gap.registered", map[string]any{
+	if err := s.emitEvent(ctx, in.PodID, in.WorkstreamID, "gap.registered", map[string]any{
 		"gap_id":      id,
 		"category":    in.Category,
 		"description": in.Description,
@@ -120,6 +124,7 @@ func (s *Service) ListCapabilityGaps(ctx context.Context, f GapFilters) ([]Capab
 		cat := string(*f.Category)
 		filter.Category = &cat
 	}
+	filter.PriorityMax = f.PriorityMax
 
 	rows, err := store.ListCapabilityGaps(ctx, filter)
 	if err != nil {

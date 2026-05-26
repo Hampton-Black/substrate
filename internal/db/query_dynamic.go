@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -19,6 +18,25 @@ func NewStore(conn *sql.DB) *Store {
 	return &Store{conn: conn}
 }
 
+// flexJSON scans JSON columns from SQLite whether returned as []byte or string.
+type flexJSON []byte
+
+func (f *flexJSON) Scan(value any) error {
+	if value == nil {
+		*f = nil
+		return nil
+	}
+	switch v := value.(type) {
+	case []byte:
+		*f = append((*f)[0:0], v...)
+	case string:
+		*f = []byte(v)
+	default:
+		return fmt.Errorf("flexJSON: unsupported type %T", value)
+	}
+	return nil
+}
+
 // WorkstreamRow is a workstream row for dynamic queries.
 type WorkstreamRow struct {
 	ID           string
@@ -28,11 +46,11 @@ type WorkstreamRow struct {
 	Status       string
 	SpecRef      sql.NullString
 	Branch       sql.NullString
-	Components   json.RawMessage
+	Components   flexJSON
 	Scope        string
 	LastActivity time.Time
 	CreatedAt    time.Time
-	Metadata     json.RawMessage
+	Metadata     flexJSON
 }
 
 // GapRow is a capability gap row for dynamic queries.
@@ -49,21 +67,23 @@ type GapRow struct {
 	Scope         string
 	OccurredAt    time.Time
 	ResolvedAt    sql.NullTime
-	Metadata      json.RawMessage
+	Metadata      flexJSON
 }
 
 // WorkstreamFilter optional filters for active work queries.
 type WorkstreamFilter struct {
-	Scope  *string
-	PodID  *string
-	Status *string
+	Scope     *string
+	PodID     *string
+	Component *string
+	Status    *string
 }
 
 // GapFilter optional filters for capability gap queries.
 type GapFilter struct {
-	Status   *string
-	Category *string
-	PodID    *string
+	Status      *string
+	Category    *string
+	PodID       *string
+	PriorityMax *int
 }
 
 // QueryActiveWork lists workstreams with optional filters.
@@ -81,6 +101,10 @@ func (s *Store) QueryActiveWork(ctx context.Context, f WorkstreamFilter) ([]Work
 	if f.PodID != nil && *f.PodID != "" {
 		b.WriteString(" AND pod_id = ?")
 		args = append(args, *f.PodID)
+	}
+	if f.Component != nil && *f.Component != "" {
+		b.WriteString(" AND EXISTS (SELECT 1 FROM json_each(components) WHERE value = ?)")
+		args = append(args, *f.Component)
 	}
 	if f.Status != nil && *f.Status != "" {
 		b.WriteString(" AND status = ?")
@@ -130,6 +154,10 @@ func (s *Store) ListCapabilityGaps(ctx context.Context, f GapFilter) ([]GapRow, 
 	if f.Category != nil && *f.Category != "" {
 		b.WriteString(" AND category = ?")
 		args = append(args, *f.Category)
+	}
+	if f.PriorityMax != nil {
+		b.WriteString(" AND priority <= ?")
+		args = append(args, *f.PriorityMax)
 	}
 	b.WriteString(" ORDER BY priority ASC, occurred_at DESC")
 

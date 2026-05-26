@@ -2,28 +2,30 @@ package core_test
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Hampton-Black/substrate/internal/core"
 	"github.com/Hampton-Black/substrate/internal/db"
 	"github.com/stretchr/testify/require"
 )
 
-func newTestService(t *testing.T) (*core.Service, context.Context) {
+func newTestService(t *testing.T) (*core.Service, *sql.DB, context.Context) {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
 	conn, err := db.Open(ctx, filepath.Join(dir, "test.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
-	return core.NewService(conn, nil, slog.New(slog.NewTextHandler(os.Stderr, nil))), ctx
+	return core.NewService(conn, nil, slog.New(slog.NewTextHandler(os.Stderr, nil))), conn, ctx
 }
 
 func TestRegisterPodAndList(t *testing.T) {
-	svc, ctx := newTestService(t)
+	svc, _, ctx := newTestService(t)
 
 	pod, err := svc.RegisterPod(ctx, core.RegisterPodInput{
 		Name:  "Solo Pod",
@@ -43,7 +45,7 @@ func TestSlugify(t *testing.T) {
 }
 
 func TestWorkstreamLifecycle(t *testing.T) {
-	svc, ctx := newTestService(t)
+	svc, _, ctx := newTestService(t)
 
 	_, err := svc.RegisterPod(ctx, core.RegisterPodInput{
 		Name:  "solo-pod",
@@ -67,7 +69,7 @@ func TestWorkstreamLifecycle(t *testing.T) {
 }
 
 func TestGapDedup(t *testing.T) {
-	svc, ctx := newTestService(t)
+	svc, _, ctx := newTestService(t)
 
 	_, err := svc.RegisterPod(ctx, core.RegisterPodInput{
 		Name:  "solo-pod",
@@ -97,7 +99,7 @@ func TestGapDedup(t *testing.T) {
 }
 
 func TestGetPodState(t *testing.T) {
-	svc, ctx := newTestService(t)
+	svc, _, ctx := newTestService(t)
 
 	_, err := svc.RegisterPod(ctx, core.RegisterPodInput{
 		Name:  "solo-pod",
@@ -130,7 +132,7 @@ func TestGetPodState(t *testing.T) {
 }
 
 func TestQueryActiveWorkAndListGaps(t *testing.T) {
-	svc, ctx := newTestService(t)
+	svc, _, ctx := newTestService(t)
 
 	_, err := svc.RegisterPod(ctx, core.RegisterPodInput{Name: "solo-pod", Owner: "me@example.com"})
 	require.NoError(t, err)
@@ -153,4 +155,98 @@ func TestQueryActiveWorkAndListGaps(t *testing.T) {
 	gaps, err := svc.ListCapabilityGaps(ctx, core.GapFilters{PodID: &pod})
 	require.NoError(t, err)
 	require.Len(t, gaps, 1)
+}
+
+func TestGapEventWorkstreamID(t *testing.T) {
+	svc, conn, ctx := newTestService(t)
+
+	_, err := svc.RegisterPod(ctx, core.RegisterPodInput{Name: "solo-pod", Owner: "me@example.com"})
+	require.NoError(t, err)
+
+	_, err = svc.AddGap(ctx, core.AddGapInput{
+		PodID: "solo-pod", Category: core.GapOther, Description: "no workstream", Priority: 3,
+	})
+	require.NoError(t, err)
+
+	var wsID sql.NullString
+	err = conn.QueryRowContext(ctx,
+		`SELECT workstream_id FROM events WHERE event_type = 'gap.registered' LIMIT 1`,
+	).Scan(&wsID)
+	require.NoError(t, err)
+	require.False(t, wsID.Valid)
+}
+
+func TestWhoOwns(t *testing.T) {
+	svc, conn, ctx := newTestService(t)
+
+	_, err := svc.RegisterPod(ctx, core.RegisterPodInput{Name: "solo-pod", Owner: "me@example.com"})
+	require.NoError(t, err)
+
+	owner, err := svc.WhoOwns(ctx, "auth-module")
+	require.NoError(t, err)
+	require.Nil(t, owner)
+
+	now := time.Now().UTC()
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO components (id, display_name, owner_pod, last_updated, metadata)
+		 VALUES (?, ?, ?, ?, ?)`,
+		"auth-module", "Auth Module", "solo-pod", now, `{}`,
+	)
+	require.NoError(t, err)
+
+	owner, err = svc.WhoOwns(ctx, "auth-module")
+	require.NoError(t, err)
+	require.NotNil(t, owner)
+	require.Equal(t, "solo-pod", owner.PodID)
+	require.Equal(t, "solo-pod", owner.DisplayName)
+}
+
+func TestQueryActiveWorkComponentFilter(t *testing.T) {
+	svc, conn, ctx := newTestService(t)
+
+	_, err := svc.RegisterPod(ctx, core.RegisterPodInput{Name: "solo-pod", Owner: "me@example.com"})
+	require.NoError(t, err)
+
+	ws1, err := svc.AddWorkstream(ctx, core.AddWorkstreamInput{
+		PodID: "solo-pod", Title: "Auth", Branch: "feat/auth",
+	})
+	require.NoError(t, err)
+	_, err = svc.AddWorkstream(ctx, core.AddWorkstreamInput{
+		PodID: "solo-pod", Title: "Billing", Branch: "feat/billing",
+	})
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		`UPDATE workstreams SET components = ? WHERE id = ?`,
+		[]byte(`["auth-module"]`), ws1.ID,
+	)
+	require.NoError(t, err)
+
+	component := "auth-module"
+	results, err := svc.QueryActiveWork(ctx, core.WorkFilters{Component: &component})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "Auth", results[0].Title)
+}
+
+func TestListGapsPriorityMaxFilter(t *testing.T) {
+	svc, _, ctx := newTestService(t)
+
+	_, err := svc.RegisterPod(ctx, core.RegisterPodInput{Name: "solo-pod", Owner: "me@example.com"})
+	require.NoError(t, err)
+
+	_, err = svc.AddGap(ctx, core.AddGapInput{
+		PodID: "solo-pod", Category: core.GapOther, Description: "high priority", Priority: 2,
+	})
+	require.NoError(t, err)
+	_, err = svc.AddGap(ctx, core.AddGapInput{
+		PodID: "solo-pod", Category: core.GapOther, Description: "low priority", Priority: 4,
+	})
+	require.NoError(t, err)
+
+	max := 2
+	gaps, err := svc.ListCapabilityGaps(ctx, core.GapFilters{PriorityMax: &max})
+	require.NoError(t, err)
+	require.Len(t, gaps, 1)
+	require.Equal(t, 2, gaps[0].Priority)
 }
