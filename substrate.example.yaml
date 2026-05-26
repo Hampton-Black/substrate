@@ -1,0 +1,18 @@
+# Substrate configuration example.
+# Copy to ~/.substrate/config.yaml or set SUBSTRATE_CONFIG to your path.
+
+server:
+  port: 7777
+
+storage:
+  db_path: ~/.substrate/substrate.db
+  git_repo_dir: ~/.substrate/repo
+
+llm:
+  backend: claude_api # claude_api | aws_bedrock | openai_compatible | local (stub in M0-M1)
+  model: claude-opus-4-7
+  endpoint: ""
+  api_key_env: ANTHROPIC_API_KEY
+
+synthesis:
+  enabled: false
