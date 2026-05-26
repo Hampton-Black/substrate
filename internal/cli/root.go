@@ -48,6 +48,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newWorkstreamCmd())
 	root.AddCommand(newGapCmd())
 	root.AddCommand(newMCPCmd())
+	root.AddCommand(serveCmd())
 
 	return root
 }
